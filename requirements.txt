@@ -1,0 +1,17 @@
+# ── Web Framework ──────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ── Data Processing ────────────────────────────────────────────────────────────
+polars[xlsx2csv]
+numpy
+pyarrow
+fastexcel
+
+# ── Excel ─────────────────────────────────────────────────────────────────────
+openpyxl
+xlsxwriter
+
+# ── Validation ────────────────────────────────────────────────────────────────
+pandera[polars]

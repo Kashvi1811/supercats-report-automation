@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SuperCat Report Automation | JustDial</title>
+  <meta name="description" content="Automated report generation tool for JustDial SuperCat hot data. Upload raw Excel files and generate formatted summary and raw data reports instantly." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- ── Header ──────────────────────────────────────────────────────────── -->
+    <header class="header">
+      <h1>SuperCat <span>Report Automation</span></h1>
+      <p>Upload raw hot data, apply transformations, and download a ready-to-share Excel report with summary and raw sheets — in under a minute.</p>
+    </header>
+
+    <!-- ── Upload Raw File ─────────────────────────────────────────── -->
+    <section class="card" aria-labelledby="upload-heading">
+      <div class="card-title" id="upload-heading">Upload Raw File</div>
+
+      <div class="upload-zone" id="upload-zone" role="button" tabindex="0"
+           aria-label="Click or drag to upload raw Excel file">
+        <div class="upload-icon">📊</div>
+        <h3>Drop your raw Excel file here</h3>
+        <p>or <span>click to browse</span> — only <strong>.xlsx</strong> files accepted</p>
+        <input type="file" id="file-input" accept=".xlsx" />
+      </div>
+
+      <div class="file-selected-info" id="file-selected">
+        <div class="file-icon-box">📄</div>
+        <div class="file-meta">
+          <div class="file-name" id="file-name">filename.xlsx</div>
+          <div class="file-size" id="file-size">0 MB</div>
+        </div>
+        <button class="remove-file" id="remove-file" title="Remove file" aria-label="Remove selected file">✕</button>
+      </div>
+    </section>
+
+    <!-- ── Upload Emp Info File ────────────────────────────────────── -->
+    <section class="card" aria-labelledby="upload-emp-heading">
+      <div class="card-title" id="upload-emp-heading">Upload Emp Info File</div>
+
+      <div class="upload-zone" id="upload-emp-zone" role="button" tabindex="0"
+           aria-label="Click or drag to upload emp_info Excel file">
+        <div class="upload-icon">👥</div>
+        <h3>Drop your emp_info Excel file here</h3>
+        <p>or <span>click to browse</span> — only <strong>.xlsx</strong> files accepted</p>
+        <input type="file" id="emp-file-input" accept=".xlsx" />
+      </div>
+
+      <div class="file-selected-info" id="emp-file-selected">
+        <div class="file-icon-box">📄</div>
+        <div class="file-meta">
+          <div class="file-name" id="emp-file-name">filename.xlsx</div>
+          <div class="file-size" id="emp-file-size">0 MB</div>
+        </div>
+        <button class="remove-file" id="emp-remove-file" title="Remove file" aria-label="Remove selected file">✕</button>
+      </div>
+    </section>
+
+    <!-- ── Convert ─────────────────────────────────────────────────── -->
+    <section class="card" aria-labelledby="convert-heading">
+      <div class="card-title" id="convert-heading">Process & Generate</div>
+
+      <button class="btn-convert" id="btn-convert" disabled aria-label="Convert and generate report">
+        <span class="spinner" aria-hidden="true"></span>
+        <span id="btn-text">Convert &amp; Generate Report</span>
+        <span aria-hidden="true">⚡</span>
+      </button>
+
+      <!-- Progress -->
+      <div class="progress-wrap" id="progress-wrap" role="progressbar" aria-label="Processing progress">
+        <div class="progress-label">
+          <span id="progress-msg">Starting…</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- Status message -->
+      <div class="status-bar" id="status-bar" role="status" aria-live="polite">
+        <span class="status-icon" id="status-icon"></span>
+        <span id="status-text"></span>
+      </div>
+
+      <!-- Pipeline stats -->
+      <div class="stats-row" id="stats-row" aria-label="Processing statistics">
+        <div class="stat-chip">
+          <div class="stat-value" id="stat-input">—</div>
+          <div class="stat-label">Input Rows</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-value" id="stat-filtered">—</div>
+          <div class="stat-label">After Super Cat Filter</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-value" id="stat-final">—</div>
+          <div class="stat-label">Final Output Rows</div>
+        </div>
+      </div>
+
+      <!-- Download -->
+      <button class="btn-download" id="btn-download" aria-label="Download generated Excel report">
+        <span>⬇</span>
+        Download Output Report
+      </button>
+    </section>
+
+  </div><!-- /container -->
+
+  <footer class="footer">
+    JustDial SuperCat Report Automation
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
