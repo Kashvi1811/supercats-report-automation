@@ -96,8 +96,8 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
     # Calamine is used for maximum performance under 1 minute
     df_emp = pl.read_excel(
         io.BytesIO(emp_bytes),
-        engine="calamine",
-        columns=["Employee code", "Team name", "Team_type"],
+        engine="xlsx2csv",
+        read_options={"columns": ["Employee code", "Team name", "Team_type"]},
         infer_schema_length=0,   # all columns → Utf8 (string)
     )
 
@@ -171,7 +171,7 @@ def run_pipeline(raw_bytes: bytes, emp_bytes: bytes, date_label: str | None = No
     log.info("Step 1: Reading raw input …")
     df = pl.read_excel(
         io.BytesIO(raw_bytes),
-        engine="calamine",
+        engine="xlsx2csv",
         infer_schema_length=0,  # all columns → Utf8 strings
     )
 
