@@ -16,6 +16,7 @@ Stack:
 
 import io
 import os
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -568,7 +569,7 @@ async def process(
     dl = date_label.strip() if date_label.strip() else extracted_month
 
     try:
-        result = run_pipeline(raw_bytes, emp_bytes, date_label=dl)
+        result = await asyncio.to_thread(run_pipeline, raw_bytes, emp_bytes, date_label=dl)
     except Exception as exc:
         log.exception("Pipeline error")
         raise HTTPException(status_code=500, detail=str(exc))
