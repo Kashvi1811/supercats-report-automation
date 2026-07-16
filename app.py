@@ -97,8 +97,9 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
     df_emp = pl.read_excel(
         io.BytesIO(emp_bytes),
         engine="calamine",
+        columns=["Employee code", "Team name", "Team_type"],
         infer_schema_length=0,   # all columns → Utf8 (string)
-    ).select(["Employee code", "Team name", "Team_type"])
+    )
 
     # Cast all to string (Polars may infer numeric for Employee code)
     df_emp = df_emp.with_columns([
