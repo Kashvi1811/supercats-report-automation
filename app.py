@@ -24,6 +24,7 @@ from datetime import datetime
 
 import numpy as np
 import polars as pl
+import fastexcel                 # Rust-native xlsx reader with true column selection
 import pyarrow  # noqa: F401  (Arrow columnar format used by Polars internally)
 import pandera.polars as pa
 from pandera.polars import DataFrameSchema, Column
@@ -92,16 +93,19 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
     """
     log.info("Loading emp_info mapping from uploaded file …")
 
-    # Read with Polars (calamine engine) — infer_schema_length=0 forces all cols as Utf8
-    # Calamine is used for maximum performance under 1 minute
-    df_emp = pl.read_excel(
-        io.BytesIO(emp_bytes),
-        engine="calamine",
-        columns=["Employee code", "Team name", "Team_type"],
-        infer_schema_length=0,   # all columns → Utf8 (string)
+    # Use fastexcel directly — it reads only the 3 requested columns at the
+    # Rust/Arrow level, physically skipping all other columns in the file.
+    # This keeps RAM usage tiny even for a 40MB xlsx file.
+    reader = fastexcel.read_excel(emp_bytes)   # fastexcel takes raw bytes
+    sheet  = reader.load_sheet(
+        0,
+        use_columns=["Employee code", "Team name", "Team_type"],
+        dtype_coercion="coerce",
     )
+    df_emp = sheet.to_polars()
+    del reader, sheet  # free fastexcel objects immediately
 
-    # Cast all to string (Polars may infer numeric for Employee code)
+    # Cast all to Utf8 string
     df_emp = df_emp.with_columns([
         pl.col("Employee code").cast(pl.Utf8),
         pl.col("Team name").cast(pl.Utf8),
@@ -521,13 +525,17 @@ app.mount(
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/health")
+async def health():
+    """Render health-check endpoint — always returns 200."""
+    return {"status": "ok"}
+
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def index():
-    """Serve the main UI."""
+    """Serve the main UI. HEAD is accepted so Render health checks return 200."""
     html_path = os.path.join(BASE_DIR, "index.html")
     with open(html_path, encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
-
 
 @app.get("/style.css")
 async def serve_css():
