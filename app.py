@@ -164,16 +164,24 @@ def run_pipeline(raw_bytes: bytes, emp_bytes: bytes, date_label: str | None = No
     """
     stats: dict[str, int] = {}
 
-    # ── Step 1: Read raw input ────────────────────────────────────────────────
+    # ── Step 1: Load emp_info mapping FIRST to save memory ───────────────────
+    # By doing this first, we avoid holding the large raw DataFrame in memory
+    # while parsing the 40MB emp_info file.
+    log.info("Step 1: Loading emp_info mapping …")
+    team_name_map, team_type_map = load_emp_mapping(emp_bytes)
+    del emp_bytes  # Free 40MB of RAM instantly
+
+    # ── Step 2: Read raw input ────────────────────────────────────────────────
     # xlsx2csv engine: converts xlsx → CSV internally (streaming, ~5–10x faster
     # than openpyxl which parses XML cell-by-cell). infer_schema_length=0 forces
     # all columns to Utf8 (string) — identical data guarantee as before.
-    log.info("Step 1: Reading raw input …")
+    log.info("Step 2: Reading raw input …")
     df = pl.read_excel(
         io.BytesIO(raw_bytes),
         engine="calamine",
         infer_schema_length=0,  # all columns → Utf8 strings
     )
+    del raw_bytes  # Free 25MB of RAM instantly
 
     # Safety: cast any column not already Utf8 to Utf8 (defensive, ensures
     # identical string-only schema regardless of xlsx2csv inference quirks)
@@ -192,8 +200,6 @@ def run_pipeline(raw_bytes: bytes, emp_bytes: bytes, date_label: str | None = No
     stats["input_rows"] = len(df)
     log.info("  Raw rows: %d", stats["input_rows"])
 
-    # ── Step 2: Load emp_info mapping ────────────────────────────────────────
-    team_name_map, team_type_map = load_emp_mapping(emp_bytes)
 
     # ── Step 3: Map team_type + team_name onto each row by empcode ───────────
     log.info("Step 3: Mapping team_type …")
