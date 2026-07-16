@@ -43,6 +43,9 @@ log = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EMP_INFO_PATH = os.path.join(BASE_DIR, "emp_info_1783919003.xlsx")
 
+# On Render, /data is the persistent disk mount; locally, use BASE_DIR
+CACHE_DIR = "/data" if os.path.isdir("/data") else BASE_DIR
+
 # Fixed city list from reference output (order preserved)
 SUMMARY_CITIES = [
     "Ahmedabad", "Bangalore", "Chandigarh", "Chennai",
@@ -571,7 +574,7 @@ async def process(
         raise HTTPException(status_code=500, detail=str(exc))
 
     # Cache output Excel for download
-    out_path = os.path.join(BASE_DIR, "_output_cache.xlsx")
+    out_path = os.path.join(CACHE_DIR, "_output_cache.xlsx")
     with open(out_path, "wb") as f:
         f.write(result["excel_bytes"])
 
@@ -586,7 +589,7 @@ async def process(
 @app.get("/download")
 async def download(month: str = "July"):
     """GET /download — send the cached output Excel file."""
-    out_path = os.path.join(BASE_DIR, "_output_cache.xlsx")
+    out_path = os.path.join(CACHE_DIR, "_output_cache.xlsx")
     if not os.path.exists(out_path):
         raise HTTPException(
             status_code=404,

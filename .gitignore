@@ -6,8 +6,12 @@ __pycache__/
 venv/
 .venv/
 
-# Output cache (generated at runtime, not needed in repo)
+# Output cache (generated at runtime)
 _output_cache.xlsx
+
+# Large data files (uploaded by users at runtime, not needed in repo)
+*.xlsx
+*.docx
 
 # OS
 .DS_Store
