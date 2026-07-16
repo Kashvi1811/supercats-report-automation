@@ -16,14 +16,16 @@ Stack:
 
 import io
 import os
+import re
+import zipfile
 import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from xml.etree.ElementTree import iterparse as _xml_iterparse
 
 
 import polars as pl
-import fastexcel          # Rust-native xlsx reader with true column selection
 import xlsxwriter
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
@@ -72,61 +74,141 @@ app = FastAPI(
 
 
 # ── Helper: load emp_info ──────────────────────────────────────────────────────
+_XSLX_NS  = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_DOT_ZERO = re.compile(r"\.0$")
+
+# Path to the pre-committed lightweight JSON mapping (6.7 MB)
+_EMP_JSON_COMMITTED = os.path.join(BASE_DIR, "emp_mapping.json")
+# Path to the on-disk cache updated when user uploads a new emp_info
+_EMP_JSON_CACHE     = os.path.join(CACHE_DIR, "emp_mapping_cache.json")
+_EMP_HASH_CACHE     = os.path.join(CACHE_DIR, "emp_mapping_hash.txt")
+
+
+def _parse_emp_streaming(emp_bytes: bytes) -> tuple[dict, dict]:
+    """
+    Parse emp_info xlsx using Python's built-in zipfile + streaming XML parser.
+    Never loads more than a few KB at a time — zero OOM risk on Render free tier.
+    """
+    log.info("  Streaming-parsing emp_info (first time with this file) …")
+    SItag = f"{{{_XSLX_NS}}}si"
+    ttag  = f"{{{_XSLX_NS}}}t"
+
+    with zipfile.ZipFile(io.BytesIO(emp_bytes)) as zf:
+        # 1. Load shared strings table
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in zf.namelist():
+            with zf.open("xl/sharedStrings.xml") as f:
+                for _, el in _xml_iterparse(f, events=("end",)):
+                    if el.tag == SItag:
+                        shared.append("".join((t.text or "") for t in el.iter(ttag)))
+                        el.clear()
+        log.info("  Shared strings: %d", len(shared))
+
+        # 2. Find first worksheet
+        sheet_path = "xl/worksheets/sheet1.xml"
+        if sheet_path not in zf.namelist():
+            for name in zf.namelist():
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml"):
+                    sheet_path = name
+                    break
+
+        emp_idx = name_idx = type_idx = -1
+        header_done = False
+        name_map: dict[str, str] = {}
+        type_map: dict[str, str] = {}
+        cell_col_idx = 0
+        cell_t = ""
+        cell_val = ""
+        row_vals: dict[int, str] = {}
+
+        with zf.open(sheet_path) as f:
+            for event, el in _xml_iterparse(f, events=("start", "end")):
+                local = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+
+                if event == "start" and local == "c":
+                    ref = el.get("r", "A")
+                    letters = "".join(ch for ch in ref if ch.isalpha())
+                    idx = 0
+                    for ch in letters:
+                        idx = idx * 26 + (ord(ch.upper()) - 64)
+                    cell_col_idx = idx - 1
+                    cell_t   = el.get("t", "")
+                    cell_val = ""
+
+                elif event == "end" and local in ("v", "t"):
+                    cell_val = el.text or ""
+                    el.clear()
+
+                elif event == "end" and local == "c":
+                    if cell_t == "s":
+                        try:
+                            resolved = shared[int(cell_val)]
+                        except (ValueError, IndexError):
+                            resolved = cell_val
+                    else:
+                        resolved = cell_val
+                    row_vals[cell_col_idx] = resolved
+                    el.clear()
+
+                elif event == "end" and local == "row":
+                    if not header_done:
+                        for ci, val in row_vals.items():
+                            if val == "Employee code": emp_idx  = ci
+                            elif val == "Team name":   name_idx = ci
+                            elif val == "Team_type":   type_idx = ci
+                        header_done = True
+                    else:
+                        emp_code = _DOT_ZERO.sub("", row_vals.get(emp_idx, "")).strip()
+                        if emp_code:
+                            name_map[emp_code] = row_vals.get(name_idx, "").strip().lower()
+                            type_map[emp_code] = row_vals.get(type_idx, "").strip()
+                    row_vals = {}
+                    el.clear()
+
+    return name_map, type_map
+
+
 def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
     """
-    Load emp_info mapping from uploaded bytes.
-    Validates schema with Pandera.
+    Two-tier strategy:
+      Tier 1 — Hash check: if the uploaded file matches a previously cached parse,
+               load the tiny JSON cache from disk (< 0.2 s).
+      Tier 2 — Streaming parse: first time seeing this file, stream-parse with
+               zipfile+iterparse (no OOM), then save result to disk cache.
+    Falls back to the committed emp_mapping.json if no cache exists yet.
     """
     log.info("Loading emp_info mapping from uploaded file …")
 
-    # Use fastexcel directly — it reads only the 3 requested columns at the
-    # Rust/Arrow level, physically skipping all other columns in the file.
-    # This keeps RAM usage tiny even for a 40MB xlsx file.
-    reader = fastexcel.read_excel(emp_bytes)   # fastexcel takes raw bytes
-    sheet  = reader.load_sheet(
-        0,
-        use_columns=["Employee code", "Team name", "Team_type"],
-        dtype_coercion="coerce",
-    )
-    df_emp = sheet.to_polars()
-    del reader, sheet  # free fastexcel objects immediately
+    import hashlib, json as _json
 
-    # Cast all to Utf8 string
-    df_emp = df_emp.with_columns([
-        pl.col("Employee code").cast(pl.Utf8),
-        pl.col("Team name").cast(pl.Utf8),
-        pl.col("Team_type").cast(pl.Utf8),
-    ])
+    file_hash = hashlib.md5(emp_bytes).hexdigest()
 
-    # Pandera validation removed — saves ~80MB RAM on Render free tier.
-    # Required columns are checked implicitly by fastexcel use_columns above.
+    # ── Tier 1: check disk cache ──────────────────────────────────────────────
+    if os.path.exists(_EMP_JSON_CACHE) and os.path.exists(_EMP_HASH_CACHE):
+        with open(_EMP_HASH_CACHE) as hf:
+            if hf.read().strip() == file_hash:
+                log.info("  Cache hit — loading emp mapping from disk cache.")
+                with open(_EMP_JSON_CACHE) as jf:
+                    data = _json.load(jf)
+                log.info("  emp_info loaded (cache): %d records", len(data["name_map"]))
+                return data["name_map"], data["type_map"]
 
-    # Clean Employee code: strip whitespace, remove trailing ".0"
-    df_emp = df_emp.with_columns([
-        pl.col("Employee code")
-          .str.strip_chars()
-          .str.replace(r"\.0$", "", literal=False)
-          .alias("Employee code"),
-        pl.col("Team name")
-          .str.strip_chars()
-          .str.to_lowercase()
-          .alias("Team name"),
-    ])
+    # ── Tier 2: streaming parse + save cache ──────────────────────────────────
+    name_map, type_map = _parse_emp_streaming(emp_bytes)
 
-    # Build Python dicts for O(1) lookup
-    emp_codes  = df_emp["Employee code"].to_list()
-    team_names = df_emp["Team name"].to_list()
-    team_types = df_emp["Team_type"].to_list()
+    # Save cache to persistent disk for next time
+    try:
+        with open(_EMP_JSON_CACHE, "w") as jf:
+            _json.dump({"name_map": name_map, "type_map": type_map}, jf, separators=(",", ":"))
+        with open(_EMP_HASH_CACHE, "w") as hf:
+            hf.write(file_hash)
+        log.info("  emp_info cache saved to disk.")
+    except Exception as e:
+        log.warning("  Could not save emp cache: %s", e)
 
-    _EMP_TEAM_NAME_MAP = {
-        str(k): (v if v is not None else "") for k, v in zip(emp_codes, team_names)
-    }
-    _EMP_TEAM_TYPE_MAP = {
-        str(k): (v if v is not None else "") for k, v in zip(emp_codes, team_types)
-    }
+    log.info("  emp_info loaded: %d records", len(name_map))
+    return name_map, type_map
 
-    log.info("  emp_info loaded: %d records", len(df_emp))
-    return _EMP_TEAM_NAME_MAP, _EMP_TEAM_TYPE_MAP
 
 
 # ── Main pipeline ──────────────────────────────────────────────────────────────
