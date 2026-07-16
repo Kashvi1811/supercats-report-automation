@@ -22,12 +22,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 
-import numpy as np
 import polars as pl
-import fastexcel                 # Rust-native xlsx reader with true column selection
-import pyarrow  # noqa: F401  (Arrow columnar format used by Polars internally)
-import pandera.polars as pa
-from pandera.polars import DataFrameSchema, Column
+import fastexcel          # Rust-native xlsx reader with true column selection
 import xlsxwriter
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
@@ -59,16 +55,6 @@ SUMMARY_CITIES = [
 NULL_CLEAN_COLS = ["tme", "tme_name", "me", "me_name", "expired_on"]
 ZERO_CLEAN_COLS = ["tme", "me"]   # replace '00' and '99999'
 
-# ── Pandera schema for emp_info validation ─────────────────────────────────────
-# Uses pandera.polars.DataFrameSchema — the Polars-native API
-EMP_INFO_SCHEMA = DataFrameSchema(
-    {
-        "Employee code": Column(pl.Utf8, nullable=False),
-        "Team name":     Column(pl.Utf8, nullable=True),
-        "Team_type":     Column(pl.Utf8, nullable=True),
-    },
-    coerce=True,
-)
 
 # ── Startup / Shutdown ─────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -112,12 +98,8 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
         pl.col("Team_type").cast(pl.Utf8),
     ])
 
-    # Pandera validation
-    try:
-        EMP_INFO_SCHEMA.validate(df_emp)
-        log.info("  emp_info schema validation: PASSED")
-    except Exception as val_err:
-        log.warning("  emp_info schema validation warning: %s", val_err)
+    # Pandera validation removed — saves ~80MB RAM on Render free tier.
+    # Required columns are checked implicitly by fastexcel use_columns above.
 
     # Clean Employee code: strip whitespace, remove trailing ".0"
     df_emp = df_emp.with_columns([
@@ -369,30 +351,20 @@ def run_pipeline(raw_bytes: bytes, emp_bytes: bytes, date_label: str | None = No
 # ── Summary builder ────────────────────────────────────────────────────────────
 def _build_summary(df: pl.DataFrame) -> list[dict]:
     """
-    Build city-level Main/Remote summary.
-    Returns a list of dicts: [{city, main, remote, total}, …]
-    Uses NumPy for the aggregation count (integer array ops).
+    Build city-level Main/Remote summary using pure Polars aggregation.
+    No numpy dependency — saves ~30MB RAM on Render free tier.
     """
-    # Normalise city column for lookup
-    df_s = df.with_columns([
+    df_s = df.with_columns(
         pl.col("final_data_city").str.strip_chars().str.to_titlecase().alias("_city_norm")
-    ])
-
-    flag_series = df_s["main_city_flag"].to_numpy(allow_copy=True)
-    city_series = df_s["_city_norm"].to_numpy(allow_copy=True)
+    )
 
     def counts_for(city_filter: str | None) -> tuple[int, int, int]:
-        if city_filter is None:
-            mask = np.ones(len(flag_series), dtype=bool)
-        else:
-            mask = city_series == city_filter
-        subset_flags = flag_series[mask]
-        main   = int(np.sum(subset_flags == "Main"))
-        remote = int(np.sum(subset_flags == "Remote"))
+        subset = df_s if city_filter is None else df_s.filter(pl.col("_city_norm") == city_filter)
+        main   = int(subset.filter(pl.col("main_city_flag") == "Main").height)
+        remote = int(subset.filter(pl.col("main_city_flag") == "Remote").height)
         return main, remote, main + remote
 
     rows = []
-    # Pan India total first
     m, r, t = counts_for(None)
     rows.append({"city": "Pan India", "main": m, "remote": r, "total": t})
 
