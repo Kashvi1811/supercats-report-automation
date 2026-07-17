@@ -173,6 +173,7 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
     Two-tier strategy:
       Tier 1 — Hash check: if the uploaded file matches a previously cached parse,
                load the tiny JSON cache from disk (< 0.2 s).
+      Tier 1.5 - Committed fallback: If hash matches the originally committed file, use emp_mapping.json
       Tier 2 — Streaming parse: first time seeing this file, stream-parse with
                zipfile+iterparse (no OOM), then save result to disk cache.
     Falls back to the committed emp_mapping.json if no cache exists yet.
@@ -192,6 +193,15 @@ def load_emp_mapping(emp_bytes: bytes) -> tuple[dict[str, str], dict[str, str]]:
                     data = _json.load(jf)
                 log.info("  emp_info loaded (cache): %d records", len(data["name_map"]))
                 return data["name_map"], data["type_map"]
+
+    # ── Tier 1.5: check committed cache ───────────────────────────────────────
+    COMMITTED_HASH = "ce360bed43b1c14f0edcdb82d714246e"
+    if file_hash == COMMITTED_HASH and os.path.exists(_EMP_JSON_COMMITTED):
+        log.info("  Cache hit — loading emp mapping from committed JSON.")
+        with open(_EMP_JSON_COMMITTED) as jf:
+            data = _json.load(jf)
+        log.info("  emp_info loaded (committed JSON): %d records", len(data["name_map"]))
+        return data["name_map"], data["type_map"]
 
     # ── Tier 2: streaming parse + save cache ──────────────────────────────────
     name_map, type_map = _parse_emp_streaming(emp_bytes)
